@@ -27,14 +27,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Promise}
 import scala.util.{Failure, Success}
+import scala.annotation.internal.sharable
+import scala.compiletime.uninitialized
 
 object FileUtils {
   def newAsyncBufferedWriter(path: Path, charset: Charset = StandardCharsets.UTF_8.nn, options: Array[OpenOption] = NO_OPTIONS, threadsafe: Boolean = false): LineWriter = {
     val encoder: CharsetEncoder = charset.newEncoder
-    val writer = new OutputStreamWriter(Files.newOutputStream(path, options: _*), encoder)
+    val writer = new OutputStreamWriter(Files.newOutputStream(path, options*), encoder)
     newAsyncBufferedWriter(new BufferedWriter(writer), threadsafe)
   }
-  def newAsyncBufferedWriter(underlying: Writer, threadsafe: Boolean): LineWriter = {
+  def newAsyncBufferedWriter(underlying: Writer, threadsafe: Boolean): LineWriter =  {
     val async = new AsyncBufferedWriter(underlying)
     if (threadsafe) new ThreadsafeWriter(async) else async
   }
@@ -71,7 +73,10 @@ object FileUtils {
 
   }
 
-  private object AsyncBufferedWriter {
+  // FIXME: Potentially there is a false-positive error under -Ycheck-reentrant?
+  // [error] possible data race involving globally reachable variable isReadOnly in class CharBuffer: Boolean
+  // [error] possible data race involving globally reachable variable address in class Buffer: Long
+  @sharable private object AsyncBufferedWriter {
     private val Close = CharBuffer.allocate(0)
     private val Flush = CharBuffer.allocate(0)
   }
@@ -82,7 +87,7 @@ object FileUtils {
       background.ensureProcessed(current)
       current = allocate
     }
-//    allocate or reuse a CharArray which is guaranteed to have a backing array
+    // allocate or reuse a CharArray which is guaranteed to have a backing array
     private def allocate: CharBuffer = {
       val reused = background.reuseBuffer
       if (reused eq null)      CharBuffer.allocate(bufferSize)
@@ -150,7 +155,7 @@ object FileUtils {
       //a failure detected will case an Failure, Success indicates a close
       val asyncStatus = Promise[Unit]()
       private val scheduled = new AtomicBoolean
-      @volatile var reuseBuffer: CharBuffer = _
+      @volatile var reuseBuffer: CharBuffer = uninitialized
 
       def ensureProcessed(buffer: CharBuffer): Unit = {
         if (asyncStatus.isCompleted) {
